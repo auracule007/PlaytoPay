@@ -1,0 +1,79 @@
+# Render blueprint. Run `render blueprint launch` or import via the dashboard.
+# Five services: postgres, redis, web (Django), worker (Celery), beat
+# (Celery scheduler). The frontend deploys as a separate static site.
+databases:
+  - name: playto-postgres
+    plan: free
+    databaseName: playto
+    user: playto
+
+services:
+  - type: redis
+    name: playto-redis
+    plan: free
+    ipAllowList: []  # private only
+
+  - type: web
+    name: playto-web
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py seed
+    startCommand: gunicorn playto.wsgi --bind 0.0.0.0:$PORT --workers 3
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "0"
+      - key: ALLOWED_HOSTS
+        value: "*"
+      - key: DATABASE_URL
+        fromDatabase: { name: playto-postgres, property: connectionString }
+      - key: REDIS_URL
+        fromService: { name: playto-redis, type: redis, property: connectionString }
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false  # set per-environment to your frontend URL
+
+  - type: worker
+    name: playto-worker
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A playto worker -l info --concurrency=4
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        fromService: { name: playto-web, type: web, envVarKey: DJANGO_SECRET_KEY }
+      - key: DATABASE_URL
+        fromDatabase: { name: playto-postgres, property: connectionString }
+      - key: REDIS_URL
+        fromService: { name: playto-redis, type: redis, property: connectionString }
+
+  - type: worker
+    name: playto-beat
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A playto beat -l info
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        fromService: { name: playto-web, type: web, envVarKey: DJANGO_SECRET_KEY }
+      - key: DATABASE_URL
+        fromDatabase: { name: playto-postgres, property: connectionString }
+      - key: REDIS_URL
+        fromService: { name: playto-redis, type: redis, property: connectionString }
+
+  - type: web
+    name: playto-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE
+        sync: false  # set to https://playto-web.onrender.com after first deploy
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

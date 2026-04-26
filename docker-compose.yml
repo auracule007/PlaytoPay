@@ -1,0 +1,69 @@
+# Local development. Mirrors the Render production layout: web, worker,
+# beat, postgres, redis. Run: docker compose up --build.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: playto
+      POSTGRES_PASSWORD: playto
+      POSTGRES_DB: playto
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U playto"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: ./backend
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py seed &&
+             gunicorn playto.wsgi --bind 0.0.0.0:8000 --workers 3"
+    environment:
+      DEBUG: "1"
+      DATABASE_URL: postgres://playto:playto@postgres:5432/playto
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_SECRET_KEY: dev-key
+      ALLOWED_HOSTS: "*"
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: ./backend
+    command: celery -A playto worker -l info --concurrency=4
+    environment:
+      DEBUG: "1"
+      DATABASE_URL: postgres://playto:playto@postgres:5432/playto
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_SECRET_KEY: dev-key
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  beat:
+    build: ./backend
+    command: celery -A playto beat -l info
+    environment:
+      DEBUG: "1"
+      DATABASE_URL: postgres://playto:playto@postgres:5432/playto
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_SECRET_KEY: dev-key
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+volumes:
+  pgdata:
