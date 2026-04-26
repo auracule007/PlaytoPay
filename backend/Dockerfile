@@ -20,4 +20,4 @@ COPY . .
 RUN python manage.py collectstatic --noinput || true
 
 EXPOSE 8000
-CMD ["gunicorn", "playto.wsgi", "--bind", "0.0.0.0:8000", "--workers", "3"]
+CMD ["sh", "-c", "python manage.py migrate && python manage.py seed && gunicorn playto.wsgi --bind 0.0.0.0:${PORT:-8000} --workers 3"]
