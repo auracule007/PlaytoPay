@@ -140,6 +140,7 @@ class PayoutCollectionView(MerchantContextMixin, APIView):
         merchant = self.get_merchant(request)
         qs = (
             Payout.objects.filter(merchant=merchant)
+            .select_related("bank_account")   # avoid N+1 — PayoutSerializer nests bank_account
             .order_by("-created_at")[:50]
         )
         return Response(PayoutSerializer(qs, many=True).data)
